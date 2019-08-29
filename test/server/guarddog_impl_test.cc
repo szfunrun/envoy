@@ -98,7 +98,7 @@ protected:
   void SetupForDeath() {
     InSequence s;
     initGuardDog(fakestats_, config_kill_);
-    unpet_dog_ = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+    unpet_dog_ = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
     guard_dog_->forceCheckForTest();
     time_system_->sleep(std::chrono::milliseconds(99)); // 1 ms shy of death.
   }
@@ -110,9 +110,11 @@ protected:
   void SetupForMultiDeath() {
     InSequence s;
     initGuardDog(fakestats_, config_multikill_);
-    auto unpet_dog_ = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+    auto unpet_dog_ =
+        guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
     guard_dog_->forceCheckForTest();
-    auto second_dog_ = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+    auto second_dog_ =
+        guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
     guard_dog_->forceCheckForTest();
     time_system_->sleep(std::chrono::milliseconds(499)); // 1 ms shy of multi-death.
   }
@@ -177,8 +179,9 @@ TEST_P(GuardDogAlmostDeadTest, NearDeathTest) {
   // there is no death. The positive case is covered in MultiKillDeathTest.
   InSequence s;
   initGuardDog(fakestats_, config_multikill_);
-  auto unpet_dog = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
-  auto pet_dog = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+  auto unpet_dog =
+      guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
+  auto pet_dog = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
   // This part "waits" 600 milliseconds while one dog is touched every 100, and
   // the other is not. 600ms is over the threshold of 500ms for multi-kill but
   // only one is nonresponsive, so there should be no kill (single kill
@@ -207,7 +210,8 @@ TEST_P(GuardDogMissTest, MissTest) {
   initGuardDog(stats_store_, config_miss_);
   // We'd better start at 0:
   EXPECT_EQ(0UL, stats_store_.counter("server.watchdog_miss").value());
-  auto unpet_dog = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+  auto unpet_dog =
+      guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
   // At 300ms we shouldn't have hit the timeout yet:
   time_system_->sleep(std::chrono::milliseconds(300));
   guard_dog_->forceCheckForTest();
@@ -229,7 +233,8 @@ TEST_P(GuardDogMissTest, MegaMissTest) {
   // This test checks the actual collected statistics after doing some timer
   // advances that should and shouldn't increment the counters.
   initGuardDog(stats_store_, config_mega_);
-  auto unpet_dog = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+  auto unpet_dog =
+      guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
   // We'd better start at 0:
   EXPECT_EQ(0UL, stats_store_.counter("server.watchdog_mega_miss").value());
   // This shouldn't be enough to increment the stat:
@@ -254,7 +259,8 @@ TEST_P(GuardDogMissTest, MissCountTest) {
   // spurious condition_variable wakeup causes the counter to get incremented
   // more than it should be.
   initGuardDog(stats_store_, config_miss_);
-  auto sometimes_pet_dog = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+  auto sometimes_pet_dog =
+      guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
   // These steps are executed once without ever touching the watchdog.
   // Then the last step is to touch the watchdog and repeat the steps.
   // This verifies that the behavior is reset back to baseline after a touch.
@@ -314,7 +320,8 @@ TEST_P(GuardDogTestBase, WatchDogThreadIdTest) {
   NiceMock<Stats::MockStore> stats;
   NiceMock<Configuration::MockMain> config(100, 90, 1000, 500);
   initGuardDog(stats, config);
-  auto watched_dog = guard_dog_->createWatchDog(api_->threadFactory().currentThreadId());
+  auto watched_dog =
+      guard_dog_->createWatchDog(api_->threadFactory().currentThreadId(), "test_thread");
   EXPECT_EQ(watched_dog->threadId().debugString(),
             api_->threadFactory().currentThreadId().debugString());
   guard_dog_->stopWatching(watched_dog);

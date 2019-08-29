@@ -14,8 +14,10 @@
 namespace Envoy {
 namespace Server {
 
-ConnectionHandlerImpl::ConnectionHandlerImpl(spdlog::logger& logger, Event::Dispatcher& dispatcher)
-    : logger_(logger), dispatcher_(dispatcher), disable_listeners_(false) {}
+ConnectionHandlerImpl::ConnectionHandlerImpl(spdlog::logger& logger, Event::Dispatcher& dispatcher,
+                                             const std::string& per_handler_stat_prefix)
+    : logger_(logger), dispatcher_(dispatcher),
+      per_handler_stat_prefix_(per_handler_stat_prefix + "."), disable_listeners_(false) {}
 
 void ConnectionHandlerImpl::addListener(Network::ListenerConfig& config) {
   ActiveListenerBasePtr listener;
@@ -88,7 +90,12 @@ ConnectionHandlerImpl::ActiveListenerBase::ActiveListenerBase(ConnectionHandlerI
                                                               Network::ListenerPtr&& listener,
                                                               Network::ListenerConfig& config)
     : parent_(parent), listener_(std::move(listener)),
-      stats_(generateStats(config.listenerScope())),
+      stats_({ALL_LISTENER_STATS(POOL_COUNTER(config.listenerScope()),
+                                 POOL_GAUGE(config.listenerScope()),
+                                 POOL_HISTOGRAM(config.listenerScope()))}),
+      per_worker_stats_({ALL_PER_WORKER_LISTENER_STATS(
+          POOL_COUNTER_PREFIX(config.listenerScope(), parent.per_handler_stat_prefix_),
+          POOL_GAUGE_PREFIX(config.listenerScope(), parent.per_handler_stat_prefix_))}),
       listener_filters_timeout_(config.listenerFiltersTimeout()),
       continue_on_listener_filters_timeout_(config.continueOnListenerFiltersTimeout()),
       listener_tag_(config.listenerTag()), config_(config) {}
@@ -306,16 +313,15 @@ ConnectionHandlerImpl::ActiveConnection::ActiveConnection(ActiveTcpListener& lis
   connection_->addConnectionCallbacks(*this);
   listener_.stats_.downstream_cx_total_.inc();
   listener_.stats_.downstream_cx_active_.inc();
+  listener_.per_worker_stats_.downstream_cx_total_.inc();
+  listener_.per_worker_stats_.downstream_cx_active_.inc();
 }
 
 ConnectionHandlerImpl::ActiveConnection::~ActiveConnection() {
   listener_.stats_.downstream_cx_active_.dec();
   listener_.stats_.downstream_cx_destroy_.inc();
+  listener_.per_worker_stats_.downstream_cx_active_.dec();
   conn_length_->complete();
-}
-
-ListenerStats ConnectionHandlerImpl::generateStats(Stats::Scope& scope) {
-  return {ALL_LISTENER_STATS(POOL_COUNTER(scope), POOL_GAUGE(scope), POOL_HISTOGRAM(scope))};
 }
 
 ConnectionHandlerImpl::ActiveUdpListener::ActiveUdpListener(ConnectionHandlerImpl& parent,

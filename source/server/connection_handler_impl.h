@@ -40,13 +40,25 @@ struct ListenerStats {
   ALL_LISTENER_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT, GENERATE_HISTOGRAM_STRUCT)
 };
 
+#define ALL_PER_WORKER_LISTENER_STATS(COUNTER, GAUGE)                                              \
+  COUNTER(downstream_cx_total)                                                                     \
+  GAUGE(downstream_cx_active, Accumulate)
+
+/**
+ * Wrapper struct for pe-worker listener stats. @see stats_macros.h
+ */
+struct PerWorkerListenerStats {
+  ALL_PER_WORKER_LISTENER_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT)
+};
+
 /**
  * Server side connection handler. This is used both by workers as well as the
  * main thread for non-threaded listeners.
  */
 class ConnectionHandlerImpl : public Network::ConnectionHandler, NonCopyable {
 public:
-  ConnectionHandlerImpl(spdlog::logger& logger, Event::Dispatcher& dispatcher);
+  ConnectionHandlerImpl(spdlog::logger& logger, Event::Dispatcher& dispatcher,
+                        const std::string& per_handler_stat_prefix);
 
   // Network::ConnectionHandler
   uint64_t numConnections() override { return num_connections_; }
@@ -88,6 +100,7 @@ private:
     ConnectionHandlerImpl& parent_;
     Network::ListenerPtr listener_;
     ListenerStats stats_;
+    PerWorkerListenerStats per_worker_stats_;
     const std::chrono::milliseconds listener_filters_timeout_;
     const bool continue_on_listener_filters_timeout_;
     const uint64_t listener_tag_;
@@ -221,10 +234,9 @@ private:
     Event::TimerPtr timer_;
   };
 
-  static ListenerStats generateStats(Stats::Scope& scope);
-
   spdlog::logger& logger_;
   Event::Dispatcher& dispatcher_;
+  const std::string per_handler_stat_prefix_;
   std::list<std::pair<Network::Address::InstanceConstSharedPtr, ActiveListenerBasePtr>> listeners_;
   std::atomic<uint64_t> num_connections_{};
   bool disable_listeners_;

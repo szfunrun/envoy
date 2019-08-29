@@ -91,9 +91,11 @@ public:
   virtual ~WorkerFactory() = default;
 
   /**
+   * fixfix
    * @return WorkerPtr a new worker.
    */
-  virtual WorkerPtr createWorker(OverloadManager& overload_manager) PURE;
+  virtual WorkerPtr createWorker(OverloadManager& overload_manager,
+                                 const std::string& worker_name) PURE;
 };
 
 } // namespace Server

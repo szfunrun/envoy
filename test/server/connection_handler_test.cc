@@ -30,7 +30,7 @@ namespace {
 class ConnectionHandlerTest : public testing::Test, protected Logger::Loggable<Logger::Id::main> {
 public:
   ConnectionHandlerTest()
-      : handler_(new ConnectionHandlerImpl(ENVOY_LOGGER(), dispatcher_)),
+      : handler_(new ConnectionHandlerImpl(ENVOY_LOGGER(), dispatcher_, "test")),
         filter_chain_(Network::Test::createEmptyFilterChainWithRawBufferSockets()) {}
 
   class TestListener : public Network::ListenerConfig, public LinkedObject<TestListener> {
