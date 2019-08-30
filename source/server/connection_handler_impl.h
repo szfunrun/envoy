@@ -58,18 +58,17 @@ struct PerWorkerListenerStats {
 class ConnectionHandlerImpl : public Network::ConnectionHandler, NonCopyable {
 public:
   ConnectionHandlerImpl(spdlog::logger& logger, Event::Dispatcher& dispatcher,
-                        const std::string& per_handler_stat_prefix);
+                        const std::string& per_handler_stat_prefix,
+                        Network::ConnectionBalancer* connection_balancer);
 
   // Network::ConnectionHandler
-  uint64_t numConnections() override { return num_connections_; }
+  uint64_t numConnections() override { return num_handler_connections_; }
   void addListener(Network::ListenerConfig& config) override;
   void removeListeners(uint64_t listener_tag) override;
   void stopListeners(uint64_t listener_tag) override;
   void stopListeners() override;
   void disableListeners() override;
   void enableListeners() override;
-
-  Network::Listener* findListenerByAddress(const Network::Address::Instance& address) override;
 
 private:
   struct ActiveListenerBase;
@@ -138,18 +137,27 @@ private:
   /**
    * Wrapper for an active tcp listener owned by this handler.
    */
-  struct ActiveTcpListener : public Network::ListenerCallbacks, public ActiveListenerBase {
+  struct ActiveTcpListener : public Network::ListenerCallbacks,
+                             public ActiveListenerBase,
+                             public Network::BalancedConnectionHandler {
     ActiveTcpListener(ConnectionHandlerImpl& parent, Network::ListenerConfig& config);
-
     ActiveTcpListener(ConnectionHandlerImpl& parent, Network::ListenerPtr&& listener,
                       Network::ListenerConfig& config);
-
     ~ActiveTcpListener() override;
+    void onAcceptWorker(Network::ConnectionSocketPtr&& socket,
+                        bool hand_off_restored_destination_connections,
+                        bool rebalanced);
+    void onNewConnection(Network::ConnectionPtr&& new_connection);
 
     // Network::ListenerCallbacks
     void onAccept(Network::ConnectionSocketPtr&& socket,
                   bool hand_off_restored_destination_connections) override;
-    void onNewConnection(Network::ConnectionPtr&& new_connection) override;
+
+    // Network::BalancedConnectionHandler
+    uint64_t tag() override { return config_.listenerTag(); }
+    uint64_t numConnections() override { return num_listener_connections_; }
+    void incNumConnections() override { num_listener_connections_++; }
+    void post(Network::ConnectionSocketPtr&& socket) override;
 
     /**
      * Remove and destroy an active connection.
@@ -164,6 +172,9 @@ private:
 
     std::list<ActiveSocketPtr> sockets_;
     std::list<ActiveConnectionPtr> connections_;
+
+    // fixfix comments
+    std::atomic<uint64_t> num_listener_connections_{};
   };
 
   /**
@@ -209,6 +220,12 @@ private:
     ~ActiveSocket() override {
       accept_filters_.clear();
       listener_.stats_.downstream_pre_cx_active_.dec();
+
+      // fixfix comments
+      if (socket_ != nullptr) {
+        ASSERT(listener_.num_listener_connections_ > 0);
+        listener_.num_listener_connections_--;
+      }
     }
 
     void onTimeout();
@@ -237,8 +254,9 @@ private:
   spdlog::logger& logger_;
   Event::Dispatcher& dispatcher_;
   const std::string per_handler_stat_prefix_;
+  Network::ConnectionBalancer* connection_balancer_;
   std::list<std::pair<Network::Address::InstanceConstSharedPtr, ActiveListenerBasePtr>> listeners_;
-  std::atomic<uint64_t> num_connections_{};
+  std::atomic<uint64_t> num_handler_connections_{};
   bool disable_listeners_;
 };
 

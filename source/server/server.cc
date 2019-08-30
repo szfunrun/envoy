@@ -64,7 +64,7 @@ InstanceImpl::InstanceImpl(const Options& options, Event::TimeSystem& time_syste
       api_(new Api::Impl(thread_factory, store, time_system, file_system)),
       dispatcher_(api_->allocateDispatcher()),
       singleton_manager_(new Singleton::ManagerImpl(api_->threadFactory())),
-      handler_(new ConnectionHandlerImpl(ENVOY_LOGGER(), *dispatcher_, "main_thread")),
+      handler_(new ConnectionHandlerImpl(ENVOY_LOGGER(), *dispatcher_, "main_thread", nullptr)),
       random_generator_(std::move(random_generator)), listener_component_factory_(*this),
       worker_factory_(thread_local_, *api_, hooks),
       dns_resolver_(dispatcher_->createDnsResolver({})),

@@ -108,12 +108,6 @@ public:
    */
   virtual void onAccept(ConnectionSocketPtr&& socket,
                         bool hand_off_restored_destination_connections = true) PURE;
-
-  /**
-   * Called when a new connection is accepted.
-   * @param new_connection supplies the new connection that is moved into the callee.
-   */
-  virtual void onNewConnection(ConnectionPtr&& new_connection) PURE;
 };
 
 /**

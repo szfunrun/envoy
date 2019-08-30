@@ -31,14 +31,6 @@ public:
   virtual void addListener(ListenerConfig& config) PURE;
 
   /**
-   * Find a listener based on the provided listener address value.
-   * @param address supplies the address value.
-   * @return a pointer to the listener or nullptr if not found.
-   * Ownership of the listener is NOT transferred
-   */
-  virtual Network::Listener* findListenerByAddress(const Network::Address::Instance& address) PURE;
-
-  /**
    * Remove listeners using the listener tag as a key. All connections owned by the removed
    * listeners will be closed.
    * @param listener_tag supplies the tag passed to addListener().
@@ -71,6 +63,45 @@ public:
 };
 
 using ConnectionHandlerPtr = std::unique_ptr<ConnectionHandler>;
+
+/**
+ * fixfix
+ */
+class BalancedConnectionHandler {
+public:
+  virtual ~BalancedConnectionHandler() = default;
+
+  virtual uint64_t tag() PURE;
+  virtual uint64_t numConnections() PURE;
+  virtual void incNumConnections() PURE;
+  virtual void post(Network::ConnectionSocketPtr&& socket) PURE;
+};
+
+/**
+ * fixfix
+ */
+class ConnectionBalancer {
+public:
+  virtual ~ConnectionBalancer() = default;
+
+  /**
+   *
+   */
+  virtual void registerHandler(BalancedConnectionHandler& handler) PURE;
+
+  /**
+   *
+   */
+  virtual void unregisterHandler(BalancedConnectionHandler& handler) PURE;
+
+  /**
+   *
+   */
+  enum class BalanceConnectionResult { Rebalanced, Continue };
+  virtual BalanceConnectionResult
+  balanceConnection(Network::ConnectionSocketPtr&& socket,
+                    BalancedConnectionHandler& current_handler) PURE;
+};
 
 } // namespace Network
 } // namespace Envoy

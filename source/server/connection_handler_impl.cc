@@ -15,9 +15,11 @@ namespace Envoy {
 namespace Server {
 
 ConnectionHandlerImpl::ConnectionHandlerImpl(spdlog::logger& logger, Event::Dispatcher& dispatcher,
-                                             const std::string& per_handler_stat_prefix)
+                                             const std::string& per_handler_stat_prefix,
+                                             Network::ConnectionBalancer* connection_balancer)
     : logger_(logger), dispatcher_(dispatcher),
-      per_handler_stat_prefix_(per_handler_stat_prefix + "."), disable_listeners_(false) {}
+      per_handler_stat_prefix_(per_handler_stat_prefix + "."),
+      connection_balancer_(connection_balancer), disable_listeners_(false) {}
 
 void ConnectionHandlerImpl::addListener(Network::ListenerConfig& config) {
   ActiveListenerBasePtr listener;
@@ -82,8 +84,6 @@ void ConnectionHandlerImpl::ActiveTcpListener::removeConnection(ActiveConnection
                            *connection.connection_);
   ActiveConnectionPtr removed = connection.removeFromList(connections_);
   parent_.dispatcher_.deferredDelete(std::move(removed));
-  ASSERT(parent_.num_connections_ > 0);
-  parent_.num_connections_--;
 }
 
 ConnectionHandlerImpl::ActiveListenerBase::ActiveListenerBase(ConnectionHandlerImpl& parent,
@@ -111,9 +111,17 @@ ConnectionHandlerImpl::ActiveTcpListener::ActiveTcpListener(ConnectionHandlerImp
 ConnectionHandlerImpl::ActiveTcpListener::ActiveTcpListener(ConnectionHandlerImpl& parent,
                                                             Network::ListenerPtr&& listener,
                                                             Network::ListenerConfig& config)
-    : ConnectionHandlerImpl::ActiveListenerBase(parent, std::move(listener), config) {}
+    : ConnectionHandlerImpl::ActiveListenerBase(parent, std::move(listener), config) {
+  if (parent_.connection_balancer_ != nullptr) {
+    parent_.connection_balancer_->registerHandler(*this);
+  }
+}
 
 ConnectionHandlerImpl::ActiveTcpListener::~ActiveTcpListener() {
+  if (parent_.connection_balancer_ != nullptr) {
+    parent_.connection_balancer_->unregisterHandler(*this);
+  }
+
   // Purge sockets that have not progressed to connections. This should only happen when
   // a listener filter stops iteration and never resumes.
   while (!sockets_.empty()) {
@@ -126,12 +134,9 @@ ConnectionHandlerImpl::ActiveTcpListener::~ActiveTcpListener() {
   }
 
   parent_.dispatcher_.clearDeferredDeleteList();
-}
 
-Network::Listener*
-ConnectionHandlerImpl::findListenerByAddress(const Network::Address::Instance& address) {
-  ActiveListenerBase* listener = findActiveListenerByAddress(address);
-  return listener ? listener->listener_.get() : nullptr;
+  // fixfix comment
+  ASSERT(num_listener_connections_ == 0);
 }
 
 ConnectionHandlerImpl::ActiveListenerBase*
@@ -229,9 +234,10 @@ void ConnectionHandlerImpl::ActiveSocket::newConnection() {
     ASSERT(tcp_listener != nullptr, "ActiveSocket listener is expected to be tcp");
     // Hands off connections redirected by iptables to the listener associated with the
     // original destination address. Pass 'hand_off_restored_destination_connections' as false to
-    // prevent further redirection.
-    tcp_listener->onAccept(std::move(socket_),
-                           false /* hand_off_restored_destination_connections */);
+    // prevent further redirection. fixfix
+    ASSERT(listener_.num_listener_connections_ > 0);
+    listener_.num_listener_connections_--;
+    tcp_listener->onAcceptWorker(std::move(socket_), false, true);
   } else {
     // Set default transport protocol if none of the listener filters did it.
     if (socket_->detectedTransportProtocol().empty()) {
@@ -240,11 +246,29 @@ void ConnectionHandlerImpl::ActiveSocket::newConnection() {
     }
     // Create a new connection on this listener.
     listener_.newConnection(std::move(socket_));
+    //socket_.reset(); // fixfix
   }
 }
 
 void ConnectionHandlerImpl::ActiveTcpListener::onAccept(
     Network::ConnectionSocketPtr&& socket, bool hand_off_restored_destination_connections) {
+  onAcceptWorker(std::move(socket), hand_off_restored_destination_connections, false);
+}
+
+void ConnectionHandlerImpl::ActiveTcpListener::onAcceptWorker(
+    Network::ConnectionSocketPtr&& socket, bool hand_off_restored_destination_connections,
+    bool rebalanced) {
+  if (!rebalanced && parent_.connection_balancer_ != nullptr &&
+      Network::ConnectionBalancer::BalanceConnectionResult::Rebalanced ==
+          parent_.connection_balancer_->balanceConnection(std::move(socket), *this)) {
+    return;
+  }
+
+  // fixfix comment.
+  if (parent_.connection_balancer_ == nullptr) {
+    num_listener_connections_++;
+  }
+
   auto active_socket = std::make_unique<ActiveSocket>(*this, std::move(socket),
                                                       hand_off_restored_destination_connections);
 
@@ -298,8 +322,39 @@ void ConnectionHandlerImpl::ActiveTcpListener::onNewConnection(
     ActiveConnectionPtr active_connection(
         new ActiveConnection(*this, std::move(new_connection), parent_.dispatcher_.timeSource()));
     active_connection->moveIntoList(std::move(active_connection), connections_);
-    parent_.num_connections_++;
   }
+}
+
+namespace {
+struct RebalancedSocket {
+  Network::ConnectionSocketPtr socket;
+};
+using RebalancedSocketSharedPtr = std::shared_ptr<RebalancedSocket>;
+}
+
+void ConnectionHandlerImpl::ActiveTcpListener::post(Network::ConnectionSocketPtr&& socket) {
+  // fixfix comment
+  RebalancedSocketSharedPtr socket_to_rebalance = std::make_shared<RebalancedSocket>();
+  socket_to_rebalance->socket = std::move(socket);
+
+  parent_.dispatcher_.post([socket_to_rebalance, tag = tag(), &parent = parent_]() {
+    // fixfix hash lookup
+    auto listener_it = std::find_if(
+        parent.listeners_.begin(), parent.listeners_.end(),
+        [tag](
+            const std::pair<Network::Address::InstanceConstSharedPtr, ActiveListenerBasePtr>& p) {
+          return p.second->listener_ != nullptr && p.second->config_.listenerTag() == tag;
+        });
+
+    if (listener_it == parent.listeners_.end()) {
+      // fixfix comment
+      return;
+    }
+
+    // fixfix hand off param
+    dynamic_cast<ActiveTcpListener*>(listener_it->second.get())->onAcceptWorker(
+        std::move(socket_to_rebalance->socket), false, true);
+  });
 }
 
 ConnectionHandlerImpl::ActiveConnection::ActiveConnection(ActiveTcpListener& listener,
@@ -315,6 +370,9 @@ ConnectionHandlerImpl::ActiveConnection::ActiveConnection(ActiveTcpListener& lis
   listener_.stats_.downstream_cx_active_.inc();
   listener_.per_worker_stats_.downstream_cx_total_.inc();
   listener_.per_worker_stats_.downstream_cx_active_.inc();
+
+  // fixfix comment.
+  listener_.parent_.num_handler_connections_++;
 }
 
 ConnectionHandlerImpl::ActiveConnection::~ActiveConnection() {
@@ -322,6 +380,14 @@ ConnectionHandlerImpl::ActiveConnection::~ActiveConnection() {
   listener_.stats_.downstream_cx_destroy_.inc();
   listener_.per_worker_stats_.downstream_cx_active_.dec();
   conn_length_->complete();
+
+  // fixfix comment.
+  ASSERT(listener_.num_listener_connections_ > 0);
+  listener_.num_listener_connections_--;
+
+  // fixfix comment.
+  ASSERT(listener_.parent_.num_handler_connections_ > 0);
+  listener_.parent_.num_handler_connections_--;
 }
 
 ConnectionHandlerImpl::ActiveUdpListener::ActiveUdpListener(ConnectionHandlerImpl& parent,

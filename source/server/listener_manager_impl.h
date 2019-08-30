@@ -91,6 +91,26 @@ private:
   uint64_t next_listener_tag_{1};
 };
 
+class ConnectionBalancerImpl : public Network::ConnectionBalancer {
+public:
+  // Network::ConnectionBalancer
+  void registerHandler(Network::BalancedConnectionHandler& handler) override;
+  void unregisterHandler(Network::BalancedConnectionHandler& handler) override;
+  BalanceConnectionResult
+  balanceConnection(Network::ConnectionSocketPtr&& socket,
+                    Network::BalancedConnectionHandler& current_handler) override;
+
+private:
+  struct TagEntry {
+    absl::Mutex handler_lock_;
+    std::vector<Network::BalancedConnectionHandler*> handlers_ GUARDED_BY(handler_lock_);
+  };
+  using TagEntryPtr = std::unique_ptr<TagEntry>;
+
+  absl::Mutex tag_map_lock_;
+  absl::flat_hash_map<uint64_t, TagEntryPtr> tag_map_ GUARDED_BY(tag_map_lock_);
+};
+
 class ListenerImpl;
 using ListenerImplPtr = std::unique_ptr<ListenerImpl>;
 
@@ -198,6 +218,7 @@ private:
   ConfigTracker::EntryOwnerPtr config_tracker_entry_;
   LdsApiPtr lds_api_;
   const bool enable_dispatcher_stats_{};
+  ConnectionBalancerImpl connection_balancer_;
 };
 
 // TODO(mattklein123): Consider getting rid of pre-worker start and post-worker start code by

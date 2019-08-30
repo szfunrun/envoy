@@ -14,12 +14,14 @@ namespace Envoy {
 namespace Server {
 
 WorkerPtr ProdWorkerFactory::createWorker(OverloadManager& overload_manager,
-                                          const std::string& worker_name) {
+                                          const std::string& worker_name,
+                                          Network::ConnectionBalancer& connection_balancer) {
   Event::DispatcherPtr dispatcher(api_.allocateDispatcher());
-  return WorkerPtr{new WorkerImpl(tls_, hooks_, std::move(dispatcher),
-                                  Network::ConnectionHandlerPtr{new ConnectionHandlerImpl(
-                                      ENVOY_LOGGER(), *dispatcher, worker_name)},
-                                  overload_manager, api_, worker_name)};
+  return WorkerPtr{
+      new WorkerImpl(tls_, hooks_, std::move(dispatcher),
+                     Network::ConnectionHandlerPtr{new ConnectionHandlerImpl(
+                         ENVOY_LOGGER(), *dispatcher, worker_name, &connection_balancer)},
+                     overload_manager, api_, worker_name)};
 }
 
 WorkerImpl::WorkerImpl(ThreadLocal::Instance& tls, ListenerHooks& hooks,

@@ -294,7 +294,8 @@ public:
   ~MockWorkerFactory() override;
 
   // Server::WorkerFactory
-  WorkerPtr createWorker(OverloadManager&, const std::string&) override {
+  WorkerPtr createWorker(OverloadManager&, const std::string&,
+                         Network::ConnectionBalancer&) override {
     return WorkerPtr{createWorker_()};
   }
 
